@@ -1,7 +1,7 @@
 import axios from 'axios'
 import type { Case } from '../types'
 
-const BASE = '/api'
+const BASE = import.meta.env.VITE_API_URL || '/api'
 
 export const api = axios.create({
   baseURL: BASE,

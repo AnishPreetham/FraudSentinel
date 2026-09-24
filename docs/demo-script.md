@@ -13,6 +13,7 @@ cd frontend && npm run dev
 Verify both are up:
 - Backend: http://localhost:8000/health → `{"status": "ok"}`
 - Frontend: http://localhost:5173
+- Integration mode: http://localhost:8000/ready → reports `tigergraph: "mock"`, `llm: "deterministic_fallback"`
 
 ---
 
@@ -20,50 +21,88 @@ Verify both are up:
 
 **Narrative:** A suspicious transfer alert triggers investigation of a customer connected to a device shared by 3 other flagged accounts.
 
-**Steps:**
-1. Open http://localhost:5173
-2. Click **Scenario A: Connected Fraud Ring**
-3. Click **Run Investigation**
+**API trigger:**
+```bash
+curl -X POST http://localhost:8000/api/demo/scenario/scenario_a | python -m json.tool
+```
+
+**Or:** Open http://localhost:5173, click **Scenario A: Connected Fraud Ring**, click **Run Investigation**.
 
 **What to narrate:**
-- Watch the timeline populate in real time (13 steps)
-- Point out `collect_evidence`: 4 evidence items including the shared device flag
-- Point out `detect_patterns`: system identifies MONEY_LAUNDERING + VELOCITY_ABUSE
-- Point out `assess_uncertainty`: confidence 0.74 — high enough to proceed
-- Result: `block_account` → status `PENDING_APPROVAL` (risk is CRITICAL — human approval required)
+- Watch the timeline populate in real time (8+ steps)
+- Point out `collect_evidence`: structured wire transfers below reporting threshold
+- Point out `detect_patterns`: MONEY_LAUNDERING + VELOCITY_ABUSE detected
+- Point out `assess_uncertainty`: confidence ~74% — above threshold, proceeds to recommendation
+- Result: `block_account` → status `PENDING_APPROVAL` (CRITICAL risk requires human approval)
 
-4. Click **Approve Action** → enter approver ID `fraud_manager_1`
-5. Status updates to `EXECUTED`
+**Then:** Click **Approve Action** → enter approver ID `fraud_manager_1` → status updates to `EXECUTED`.
 
 **Key talking points:**
-- Policy engine, not LLM, decided to block the account
-- Approval gate is enforced by code — not advisory
-- TigerGraph would have provided the connected-entity graph; mock data used here
+- Policy engine (not LLM) decided to block the account — deterministic and auditable
+- `requires_approval: true` is enforced in code, not advisory
+- TigerGraph would supply the real connected-entity graph; mock data used here
 
 ---
 
-## Scenario B — Evidence Pause & Resume (3 min)
+## Scenario B — Ambiguous New Customer (1 min)
 
-**Narrative:** Ambiguous new customer with a large first transaction — not enough evidence to act; system pauses and requests additional evidence.
+**Narrative:** New customer with large first transaction. Limited history, KYC pending. System escalates to analyst rather than auto-blocking.
 
-**Steps:**
-1. Click **Scenario B: Ambiguous New Customer**
-2. Click **Run Investigation**
-3. Show the result: status = `AWAITING_EVIDENCE`, recommended action = `request_additional_evidence`
-4. In the Evidence Submission panel, submit:
-   - Evidence type: KYC document verified
-   - Content: `Customer provided valid government ID; address matches bank records`
-5. Click **Submit Evidence**
+**API trigger:**
+```bash
+curl -X POST http://localhost:8000/api/demo/scenario/scenario_b | python -m json.tool
+```
+
+**Expected output:** `status: ACTION_EXECUTED`, `action: escalate_to_analyst`
 
 **What to narrate:**
-- The investigation genuinely halted — the workflow ended at the `request_additional_evidence` node
-- Submitting evidence triggers `resume_investigation()` — a separate 7-node workflow
-- The system now re-assesses with the new evidence and produces a new recommendation
+- Confidence is ~72% — sufficient to act, but the action chosen is escalation rather than blocking
+- "Ambiguous" means policy engine routes to a safer intermediate action when patterns are unconfirmed
+- No approval required for escalate_to_analyst — it auto-executes
+
+**Key talking point:**
+- This is NOT the evidence pause scenario. It completes with a determined action.
+
+---
+
+## Scenario D — Evidence Pause & Resume (3 min)
+
+**Narrative:** Customer with verified KYC triggers geography and velocity alerts. High-risk patterns detected but contradicting clean record creates sufficient uncertainty — agent genuinely halts and waits for human-submitted evidence.
+
+**API trigger:**
+```bash
+curl -X POST http://localhost:8000/api/demo/scenario/scenario_d | python -m json.tool
+```
+
+**Expected output:** `status: AWAITING_EVIDENCE`
+
+**What to narrate:**
+- 3 fraud patterns detected (ACCOUNT_TAKEOVER, VELOCITY_ABUSE, CARD_NOT_PRESENT) → HIGH risk
+- But confidence = 43% — too low to act on a HIGH-risk case (threshold: 50%)
+- The workflow genuinely halted at `request_additional_evidence` → `END`
+- The case is stored in AWAITING_EVIDENCE state — it cannot auto-proceed
+
+**Then submit evidence:**
+```bash
+curl -X POST http://localhost:8000/api/cases/{CASE_ID}/evidence \
+  -H "Content-Type: application/json" \
+  -d '{"evidence_type": "supporting", "source": "device_match", "content": "Customer confirmed via OTP — device ownership verified", "reliability": 0.9}'
+```
+
+**Expected response:**
+```json
+{"reassessment": "complete", "status": "ACTION_EXECUTED", "risk_level": "HIGH"}
+```
+
+**What to narrate:**
+- Submitting evidence triggered `resume_investigation()` — a separate 7-node workflow
+- Confidence improved from 43% → 53% — above threshold, investigation completed
+- Evidence deduplication: submitting the same evidence_id twice doesn't create duplicate items
 
 **Key talking points:**
-- Human-in-the-loop is not simulated; the system cannot proceed without real input
-- Evidence deduplication prevents replay attacks
-- The resume workflow reuses all prior evidence + adds the new item
+- The pause is genuine: the primary workflow ended at `END`. Nothing continued without human input.
+- The resume workflow runs `assess_uncertainty → recommend_action → execute → explain → write_memory`
+- Deduplication is by `evidence_id` — tested in `test_workflow.py::test_evidence_deduplication`
 
 ---
 
@@ -71,34 +110,37 @@ Verify both are up:
 
 **Narrative:** Login from a new device in Eastern Europe followed by rapid transfers — classic ATO pattern.
 
-**Steps:**
-1. Click **Scenario C: Account Takeover**
-2. Click **Run Investigation**
+**API trigger:**
+```bash
+curl -X POST http://localhost:8000/api/demo/scenario/scenario_c | python -m json.tool
+```
 
 **What to narrate:**
-- Evidence: new device flag, new geography (Eastern Europe), rapid transfers post-login
-- Pattern detected: ACCOUNT_TAKEOVER
+- New device flag, new geography (Eastern Europe), rapid post-login transfers
+- Pattern detected: ACCOUNT_TAKEOVER + VELOCITY_ABUSE
 - Risk level: HIGH → action: `block_account` → requires FRAUD_ANALYST approval
 
-3. Show the case summary / reasoning section
-4. Point out the timeline step: `explain_decision` — generated by deterministic fallback (or LLM if API key configured)
+**Then:** Show the timeline's `explain_decision` step — case summary generated by deterministic fallback (label clearly shows "deterministic fallback" unless `ANTHROPIC_API_KEY` is set).
 
 ---
 
 ## Live API Walkthrough (optional, 2 min)
 
 ```bash
-# Check integration mode
+# Check integration mode (always honest about what's real vs. mock)
 curl http://localhost:8000/ready
 
-# Run a scenario via API
-curl -X POST http://localhost:8000/api/demo/scenario/scenario_a | python -m json.tool
+# List all scenarios
+curl http://localhost:8000/api/demo/scenarios
 
-# Get case details
-curl http://localhost:8000/api/cases/DEMO-SCENARIO_A-XXXX | python -m json.tool
+# Run scenario D
+curl -X POST http://localhost:8000/api/demo/scenario/scenario_d
+
+# Get case detail (replace with actual case_id)
+curl http://localhost:8000/api/cases/DEMO-SCENARIO_D-XXXX | python -m json.tool
 ```
 
-Show the `/ready` response highlighting `"integrations"` — honest about what's real vs. mock.
+Show the `/ready` response highlighting `"integrations"` — always honest about mock vs. real.
 
 ---
 
@@ -107,23 +149,23 @@ Show the `/ready` response highlighting `"integrations"` — honest about what's
 ```bash
 cd backend
 python scripts/run_benchmark.py
-cat outputs/benchmark/benchmark_report.md
+cat ../outputs/benchmark/benchmark_report.md
 ```
 
-Show the synthetic benchmark report — 20 cases, risk distribution, action distribution. Emphasize the `SYNTHETIC` label and that official dataset is required for competition scoring.
+**Important:** Explicitly state these are SYNTHETIC results. The report header says so. Official HHGOA dataset required for competition scoring.
 
 ---
 
 ## Q&A Talking Points
 
-**"Why deterministic policy instead of LLM?"**
-LLMs can hallucinate risk levels or approve dangerous actions. A rule-based policy engine is auditable, compliant, and never makes a random decision. LLM is used only for generating readable summaries from structured data.
+**"Why deterministic policy instead of LLM for decisions?"**
+LLMs can hallucinate risk levels or approve dangerous actions inconsistently. The rule-based policy engine is auditable, consistent, and never makes a random call. LLM is used only for generating readable summaries from structured data — it cannot change the decision.
 
-**"What happens if TigerGraph is down?"**
-The system continues in mock mode, clearly labeled. No silent fallbacks — every mock data point says so. In production, TigerGraph provides the graph traversal that makes entity-ring detection scale.
-
-**"How does the evidence pause work?"**
-The LangGraph workflow ends at `AWAITING_EVIDENCE`. The state is persisted to SQLite. When the analyst submits evidence via the API, `resume_investigation()` picks up the saved state, merges the new evidence (deduplicating by ID), and runs the 7-node resume workflow. The original workflow is not re-run from the beginning.
+**"What makes the evidence pause genuine?"**
+The primary workflow ends at `END` with status `AWAITING_EVIDENCE`. There is no timer, auto-simulation, or continuation thread. The backend stores the case state and waits. Only a human POST to `/evidence` triggers `resume_investigation()`. This is verified by the test `test_scenario_d_triggers_awaiting_evidence` — it asserts `write_memory` is absent from the paused timeline.
 
 **"What would TigerGraph add in production?"**
-Real `DetectFraudRings` traversal would surface 2nd and 3rd-degree connections that mock data can't simulate. `GetCustomerHistory` would pull actual transaction records rather than synthesized data. The graph write (`write_case_to_graph`) would make completed cases queryable by future investigations.
+Real `DetectFraudRings` traversal would surface 2nd and 3rd-degree connections that mock data cannot simulate. Graph writes (Case vertex + INVOLVED_IN edge) already implemented — they execute when `TIGERGRAPH_HOST` is configured.
+
+**"Why is Scenario B not the evidence pause?"**
+Scenario B's trigger produces confidence 72% — above the 50% threshold. The pause only triggers when confidence < 50% AND risk is HIGH/CRITICAL AND required evidence types are missing. Scenario D is specifically designed with contradicting clean-record evidence to push confidence into that window.

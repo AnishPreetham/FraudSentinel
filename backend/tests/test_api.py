@@ -109,6 +109,45 @@ async def test_reject_action():
 
 
 @pytest.mark.asyncio
+async def test_demo_scenario_d_evidence_pause():
+    """Scenario D must produce AWAITING_EVIDENCE status."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", timeout=60) as client:
+        resp = await client.post("/api/demo/scenario/scenario_d")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "case_id" in data
+    from app.models.case import CaseStatus
+    assert data["status"] == CaseStatus.AWAITING_EVIDENCE, (
+        f"Expected AWAITING_EVIDENCE, got {data['status']}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_evidence_submission_resumes_awaiting_case():
+    """Submitting evidence to an AWAITING_EVIDENCE case triggers resume_investigation."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", timeout=60) as client:
+        # Create paused case
+        create_resp = await client.post("/api/demo/scenario/scenario_d")
+        case_id = create_resp.json()["case_id"]
+
+        # Submit evidence
+        ev_resp = await client.post(
+            f"/api/cases/{case_id}/evidence",
+            json={
+                "evidence_type": "supporting",
+                "source": "device_match",
+                "content": "Customer confirmed via OTP — device ownership verified",
+                "reliability": 0.90,
+            }
+        )
+    assert ev_resp.status_code == 200
+    data = ev_resp.json()
+    assert data.get("reassessment") == "complete", "Evidence submission on paused case must trigger reassessment"
+    from app.models.case import CaseStatus
+    assert data.get("status") != CaseStatus.AWAITING_EVIDENCE, "Status must change after evidence submission"
+
+
+@pytest.mark.asyncio
 async def test_unknown_scenario_returns_error():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/api/demo/scenario/nonexistent")

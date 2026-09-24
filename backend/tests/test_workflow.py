@@ -1,7 +1,7 @@
-"""End-to-end workflow tests for all three demo scenarios."""
+"""End-to-end workflow tests for all demo scenarios including evidence pause/resume."""
 import pytest
 import asyncio
-from app.agent.workflow import run_investigation
+from app.agent.workflow import run_investigation, resume_investigation
 from app.models.case import CaseStatus
 
 
@@ -107,3 +107,89 @@ async def test_unknown_customer_completes_without_error():
     # Should complete (may escalate) but not crash
     assert result.get("error", "") == ""
     assert result.get("status") is not None
+
+
+@pytest.mark.asyncio
+async def test_scenario_d_triggers_awaiting_evidence():
+    """Verified KYC + contradicting history creates high uncertainty on HIGH-risk case."""
+    result = await run_investigation(
+        case_id="TEST-D-001",
+        customer_id="C-AMBIG",
+        account_id="A-200",
+        trigger={"type": "geography_alert", "kyc_verified_prior": True},
+    )
+    assert result.get("error", "") == "", f"Workflow error: {result.get('error')}"
+    assert result.get("status") == CaseStatus.AWAITING_EVIDENCE, (
+        f"Expected AWAITING_EVIDENCE, got {result.get('status')} "
+        f"(confidence={result.get('confidence')}, risk={result.get('risk_level')})"
+    )
+    assert result.get("confidence", 1.0) < 0.5, "Confidence should be below 0.5 to justify pause"
+    assert result.get("risk_level") in ("HIGH", "CRITICAL"), "Risk must be HIGH/CRITICAL to trigger pause"
+    patterns = result.get("fraud_patterns", [])
+    assert "ACCOUNT_TAKEOVER" in patterns
+    missing = result.get("uncertainty", {}).get("missing_evidence", [])
+    assert len(missing) > 0, "Missing evidence list must be non-empty to trigger pause"
+    # Timeline must show the pause node
+    step_names = [s["step"] for s in result.get("timeline", [])]
+    assert "request_additional_evidence" in step_names
+    assert "write_memory" not in step_names, "Memory should NOT be written before evidence pause"
+
+
+@pytest.mark.asyncio
+async def test_evidence_resume_after_pause():
+    """Submitting evidence after AWAITING_EVIDENCE resumes and completes the investigation."""
+    state = await run_investigation(
+        case_id="TEST-D-RESUME-001",
+        customer_id="C-AMBIG",
+        account_id="A-200",
+        trigger={"type": "geography_alert", "kyc_verified_prior": True},
+    )
+    assert state.get("status") == CaseStatus.AWAITING_EVIDENCE
+
+    new_evidence = [{
+        "evidence_id": "EV-RESUME-001",
+        "evidence_type": "supporting",
+        "source": "device_match",
+        "content": "Customer confirmed via SMS OTP — device ownership verified",
+        "reliability": 0.90,
+    }]
+    resumed = await resume_investigation(state, new_evidence)
+
+    assert resumed.get("error", "") == "", f"Resume error: {resumed.get('error')}"
+    assert resumed.get("status") != CaseStatus.AWAITING_EVIDENCE, "Status must change after evidence submission"
+    assert resumed.get("confidence", 0) > state.get("confidence", 0), "Confidence should improve after adding supporting evidence"
+    assert len(resumed.get("evidence", [])) == len(state.get("evidence", [])) + 1
+    # Timeline must include the evidence_received step
+    step_names = [s["step"] for s in resumed.get("timeline", [])]
+    assert "evidence_received" in step_names
+    assert "write_memory" in step_names, "Memory must be written after completed resume"
+
+
+@pytest.mark.asyncio
+async def test_evidence_deduplication():
+    """Submitting the same evidence_id twice must not create duplicate entries."""
+    state = await run_investigation(
+        case_id="TEST-D-DEDUP-001",
+        customer_id="C-AMBIG",
+        account_id="A-200",
+        trigger={"type": "geography_alert", "kyc_verified_prior": True},
+    )
+    assert state.get("status") == CaseStatus.AWAITING_EVIDENCE
+
+    evidence_item = [{
+        "evidence_id": "EV-DEDUP-001",
+        "evidence_type": "supporting",
+        "source": "device_match",
+        "content": "OTP verified",
+        "reliability": 0.90,
+    }]
+    resumed = await resume_investigation(state, evidence_item)
+    count_after_first = len(resumed.get("evidence", []))
+
+    # Submit the same evidence again
+    resumed2 = await resume_investigation(resumed, evidence_item)
+    count_after_second = len(resumed2.get("evidence", []))
+
+    assert count_after_second == count_after_first, (
+        f"Deduplication failed: evidence count went from {count_after_first} to {count_after_second}"
+    )

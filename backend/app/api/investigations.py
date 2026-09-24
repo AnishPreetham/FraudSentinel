@@ -16,7 +16,7 @@ async def get_demo_scenarios():
 async def run_demo_scenario(scenario_id: str):
     scenario = get_scenario(scenario_id)
     if not scenario:
-        return {"error": f"Scenario '{scenario_id}' not found", "available": list(["scenario_a", "scenario_b", "scenario_c"])}
+        return {"error": f"Scenario '{scenario_id}' not found", "available": list(["scenario_a", "scenario_b", "scenario_c", "scenario_d"])}
 
     case_id = f"DEMO-{scenario_id.upper()}-{str(uuid.uuid4())[:4].upper()}"
     result = await run_investigation(

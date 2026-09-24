@@ -150,6 +150,8 @@ class TigerGraphClient:
                       "account_age_days": 12, "kyc_status": "PENDING", "credit_score": None},
             "C-003": {"risk_signals": ["new_device_login", "geography_mismatch", "rapid_transfers"],
                       "account_age_days": 720, "kyc_status": "VERIFIED", "credit_score": 780},
+            "C-AMBIG": {"risk_signals": ["geography_mismatch", "rapid_velocity"],
+                        "account_age_days": 90, "kyc_status": "VERIFIED", "credit_score": 720},
         }
         profile = seed_map.get(customer_id, {
             "risk_signals": [],
@@ -191,6 +193,9 @@ class TigerGraphClient:
             "A-010": [
                 {"tx_id": "TX-3001", "amount": 12500.0, "merchant": "International Wire", "timestamp": (now - timedelta(hours=3)).isoformat(), "destination": "FOREIGN"},
                 {"tx_id": "TX-3002", "amount": 8900.0, "merchant": "ATM Withdrawal", "timestamp": (now - timedelta(hours=2)).isoformat(), "destination": "CASH"},
+            ],
+            "A-200": [
+                {"tx_id": "TX-4001", "amount": 2500.0, "merchant": "online retailer", "timestamp": (now - timedelta(hours=1)).isoformat(), "destination": "EXTERNAL"},
             ],
         }
         transactions = tx_map.get(account_id, [

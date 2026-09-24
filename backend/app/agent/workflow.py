@@ -170,6 +170,22 @@ async def collect_evidence_node(state: InvestigationState) -> dict:
             "content": "Rapid large transfers initiated immediately after new-device login — classic ATO pattern",
             "reliability": 0.92
         })
+    if trigger.get("kyc_verified_prior"):
+        # Customer has verified KYC and clean history — contradicts the risk signals
+        evidence.append({
+            "evidence_id": str(uuid.uuid4()),
+            "evidence_type": "contradicting",
+            "source": "historical_case",
+            "content": "Customer has 3+ years of clean transaction history with no prior fraud flags",
+            "reliability": 0.85
+        })
+        evidence.append({
+            "evidence_id": str(uuid.uuid4()),
+            "evidence_type": "contradicting",
+            "source": "kyc_status",
+            "content": "KYC fully verified — government ID matched, address confirmed, no sanctions hits",
+            "reliability": 0.85
+        })
 
     return {
         "transactions": tx_data.get("transactions", []),

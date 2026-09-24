@@ -6,15 +6,16 @@ services:
     ports:
       - "8000:8000"
     env_file: .env
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:////app/data/fraud_investigation.db
     volumes:
-      - ./backend:/app
       - backend_data:/app/data
     restart: unless-stopped
 
   frontend:
     build: ./frontend
     ports:
-      - "5173:80"
+      - "80:80"
     depends_on:
       - backend
     restart: unless-stopped

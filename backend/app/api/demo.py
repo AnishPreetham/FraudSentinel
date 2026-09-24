@@ -61,6 +61,22 @@ SCENARIOS = {
         "expected_outcome": "block_account",
         "expected_patterns": ["ACCOUNT_TAKEOVER"],
     },
+    "scenario_d": {
+        "id": "scenario_d",
+        "title": "Ambiguous Geography Alert — Evidence Pause",
+        "description": "Customer C-AMBIG has verified KYC and clean history but triggers geography and velocity alerts. HIGH risk patterns detected but contradicting clean-record evidence creates sufficient uncertainty — agent pauses and requests confirmation before acting. Demonstrates genuine human-in-the-loop evidence pause.",
+        "badge": "HIGH RISK — AWAITING EVIDENCE",
+        "badge_color": "orange",
+        "customer_id": "C-AMBIG",
+        "account_id": "A-200",
+        "trigger_type": "GEOGRAPHY_ALERT",
+        "trigger_details": {
+            "type": "geography_alert",
+            "kyc_verified_prior": True,
+        },
+        "expected_outcome": "request_additional_evidence",
+        "expected_patterns": ["ACCOUNT_TAKEOVER", "VELOCITY_ABUSE", "CARD_NOT_PRESENT"],
+    },
 }
 
 
