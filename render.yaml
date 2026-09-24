@@ -8,7 +8,7 @@ services:
     healthCheckPath: /health
     envVars:
       - key: DATABASE_URL
-        value: sqlite+aiosqlite:////app/data/fraud_investigation.db
+        value: sqlite+aiosqlite:///./fraud_investigation.db
       - key: CORS_ORIGINS
         sync: false
       - key: ANTHROPIC_API_KEY
@@ -21,7 +21,3 @@ services:
         sync: false
       - key: TIGERGRAPH_GRAPH
         sync: false
-    disk:
-      name: backend-data
-      mountPath: /app/data
-      sizeGB: 1
